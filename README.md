@@ -158,6 +158,3 @@ The system includes comprehensive error handling for:
 - WebSocket disconnections
 - API errors
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
