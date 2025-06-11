@@ -52,9 +52,21 @@ app.add_middleware(
 )
 
 # Add startup and shutdown events
+import httpx
+
 @app.on_event("startup")
 async def startup_event():
     print("Application startup...")
+    # Start keep-alive background task
+    async def keep_alive():
+        while True:
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.get("http://localhost:8008/health")
+            except Exception as e:
+                print(f"Keep-alive ping failed: {e}")
+            await asyncio.sleep(600)  # 10 minutes
+    asyncio.create_task(keep_alive())
 
 @app.on_event("shutdown")
 async def shutdown_event():
