@@ -266,17 +266,18 @@ async def query_qa(req: QueryRequest):
         
         for doc in source_docs:
             page_num = doc.metadata.get("page", "Unknown")
-            para_num = doc.metadata.get("paragraph", "Unknown")
+            start_line = doc.metadata.get("start_line", None)
+            end_line = doc.metadata.get("end_line", None)
             chunk_index = doc.metadata.get("chunk_index", "Unknown")
             
             doc_answer = {
-                "doc_id": doc.metadata.get("source", "Unknown"),
-                "answer": doc.page_content,
-                "citation": {
-                    "page": page_num,
-                    "paragraph": para_num,
-                    "chunk": chunk_index
-                }
+            "doc_id": doc.metadata.get("source", "Unknown"),
+            "answer": doc.page_content,
+            "citation": {
+            "page": page_num,
+            "lines": f"{start_line}-{end_line}" if start_line and end_line else None,
+            "chunk": chunk_index
+            }
             }
             individual_answers.append(doc_answer)
         
@@ -320,12 +321,12 @@ def extract_themes(answer: str) -> List[dict]:
             if '(' in line and ')' in line:
                 # Extract citation
                 citation_text = line[line.find('(')+1:line.find(')')]
-                if 'Page' in citation_text and 'Para' in citation_text:
+                if 'Page' in citation_text and 'Lines' in citation_text:
                     page = citation_text.split('Page')[1].split(',')[0].strip()
-                    para = citation_text.split('Para')[1].strip()
+                    lines = citation_text.split('Lines')[1].strip()
                     current_theme['citations'].append({
                         'page': page,
-                        'paragraph': para
+                        'lines': lines
                     })
             else:
                 current_theme['summary'] += line.strip() + ' '
@@ -359,17 +360,13 @@ async def upload_document(
         # Process document based on file type
         if file_extension == 'pdf':
             page_texts = await process_pdf(file)
-            # Split each page into paragraphs and keep track of (page, paragraph, text)
-            pdf_paragraphs = []
+            # Split each page into lines and keep track of (page, line, text)
+            pdf_lines = []
             for p in page_texts:
-                # Split on double newlines or single newlines as fallback
-                paras = [para.strip() for para in p["text"].split('\n\n') if para.strip()]
-                if len(paras) == 1:
-                    # If only one paragraph, try splitting on single newlines
-                    paras = [para.strip() for para in p["text"].split('\n') if para.strip()]
-                for idx, para in enumerate(paras):
-                    pdf_paragraphs.append({"text": para, "page": p["page"], "paragraph": idx + 1})
-            text = "\n".join([para["text"] for para in pdf_paragraphs])
+                lines = [line for line in p["text"].split('\n') if line.strip()]
+                for idx, line in enumerate(lines):
+                    pdf_lines.append({"text": line, "page": p["page"], "line": idx + 1})
+            text = "\n".join([line["text"] for line in pdf_lines])
         elif file_extension in ['docx', 'doc']:
             para_texts = await process_docx(file)
             text = "\n".join([p["text"] for p in para_texts])
@@ -422,22 +419,28 @@ async def upload_document(
                 "is_chunk": True,
                 "original_file": file.filename
             })
-            # Assign page/paragraph if possible
+            # Assign page/line range if possible
             if file_extension == 'pdf':
-                # Find which paragraph (and page) this chunk belongs to
-                para_num = None
-                page_num = None
+                # Find which lines (and page) this chunk belongs to
+                start_char = sum(len(c) for c in chunks[:i])
+                end_char = start_char + len(chunk)
                 char_count = 0
-                for p in pdf_paragraphs:
-                    if char_count + len(p["text"]) >= sum(len(c) for c in chunks[:i+1]):
-                        page_num = p["page"]
-                        para_num = p["paragraph"]
+                start_line = None
+                end_line = None
+                page_num = None
+                for line in pdf_lines:
+                    if start_line is None and char_count + len(line["text"]) > start_char:
+                        start_line = line["line"]
+                        page_num = line["page"]
+                    if char_count + len(line["text"]) >= end_char:
+                        end_line = line["line"]
                         break
-                    char_count += len(p["text"])
+                    char_count += len(line["text"])
                 if page_num:
                     chunk_metadata["page"] = page_num
-                if para_num:
-                    chunk_metadata["paragraph"] = para_num
+                if start_line and end_line:
+                    chunk_metadata["start_line"] = start_line
+                    chunk_metadata["end_line"] = end_line
             elif file_extension in ['docx', 'doc']:
                 para_num = None
                 char_count = 0
