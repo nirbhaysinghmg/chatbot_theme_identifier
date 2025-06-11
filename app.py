@@ -62,7 +62,7 @@ async def startup_event():
         while True:
             try:
                 async with httpx.AsyncClient() as client:
-                    await client.get("http://localhost:8008/health")
+                    await client.get("https://chatbot-theme-identifier-kzpk.onrender.com/health")
             except Exception as e:
                 print(f"Keep-alive ping failed: {e}")
             await asyncio.sleep(600)  # 10 minutes
@@ -128,7 +128,7 @@ Themes:
 [For each identified theme, provide:
 - Theme title
 - Summary of the theme
-- Supporting document citations (DocID, Page, Paragraph)]
+- Supporting document citations (DocID, Page, Lines)]
 
 Context: {context}
 Chat History: {chat_history}
@@ -327,6 +327,14 @@ def extract_themes(answer: str) -> List[dict]:
                     current_theme['citations'].append({
                         'page': page,
                         'lines': lines
+                    })
+                # Fallback for old format (Page, Paragraph)
+                elif 'Page' in citation_text and 'Para' in citation_text:
+                    page = citation_text.split('Page')[1].split(',')[0].strip()
+                    para = citation_text.split('Para')[1].strip()
+                    current_theme['citations'].append({
+                        'page': page,
+                        'lines': para  # treat as lines for backward compatibility
                     })
             else:
                 current_theme['summary'] += line.strip() + ' '
