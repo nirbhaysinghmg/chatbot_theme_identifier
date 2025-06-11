@@ -2,8 +2,9 @@ import os
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 
 import uuid
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Body, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Body, UploadFile, File, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_chroma import Chroma
@@ -27,6 +28,8 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 from queue import Queue
 import threading
+import signal
+import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,11 +45,32 @@ app = FastAPI(title="Document Analysis Chatbot")
 # Add CORS middleware with specific origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://*.vercel.app",
+        "https://your-vercel-domain.vercel.app"  # Replace with your actual Vercel domain
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    print("Application startup...")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    print("Application shutdown...")
+    # Clean up any resources here
+    for session_id in list(document_collections.keys()):
+        try:
+            session_dir = os.path.join(PERSIST_DIRECTORY, session_id)
+            if os.path.exists(session_dir):
+                shutil.rmtree(session_dir)
+        except Exception as e:
+            print(f"Error cleaning up session {session_id}: {str(e)}")
 
 # Prepare embeddings
 EMBED_MODEL = os.getenv("EMBED_MODEL", "models/embedding-001")
@@ -153,23 +177,26 @@ class ProcessingStatus(BaseModel):
     completed_files: List[str]
 
 # Document processing functions
-async def process_pdf(file: UploadFile) -> str:
+async def process_pdf(file: UploadFile) -> list:
     contents = await file.read()
     pdf_file = io.BytesIO(contents)
     pdf_reader = PyPDF2.PdfReader(pdf_file)
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text() + "\n"
-    return text
+    page_texts = []
+    for i, page in enumerate(pdf_reader.pages):
+        page_text = page.extract_text()
+        if page_text:
+            page_texts.append({"text": page_text, "page": i + 1})
+    return page_texts
 
-async def process_docx(file: UploadFile) -> str:
+async def process_docx(file: UploadFile) -> list:
     contents = await file.read()
     docx_file = io.BytesIO(contents)
     doc = docx.Document(docx_file)
-    text = ""
-    for paragraph in doc.paragraphs:
-        text += paragraph.text + "\n"
-    return text
+    para_texts = []
+    for i, paragraph in enumerate(doc.paragraphs):
+        if paragraph.text.strip():
+            para_texts.append({"text": paragraph.text, "paragraph": i + 1})
+    return para_texts
 
 async def process_txt(file: UploadFile) -> str:
     contents = await file.read()
@@ -323,9 +350,12 @@ async def upload_document(
 
         # Process document based on file type
         if file_extension == 'pdf':
-            text = await process_pdf(file)
+            page_texts = await process_pdf(file)
+            # Combine all text for embedding, but keep page info for chunking
+            text = "\n".join([p["text"] for p in page_texts])
         elif file_extension in ['docx', 'doc']:
-            text = await process_docx(file)
+            para_texts = await process_docx(file)
+            text = "\n".join([p["text"] for p in para_texts])
         elif file_extension == 'txt':
             text = await process_txt(file)
         elif file_extension in ['jpg', 'jpeg', 'png']:
@@ -372,9 +402,31 @@ async def upload_document(
             chunk_metadata.update({
                 "chunk_index": i,
                 "total_chunks": len(chunks),
-                "is_chunk": True,  # Mark this as a chunk
-                "original_file": file.filename  # Reference to original file
+                "is_chunk": True,
+                "original_file": file.filename
             })
+            # Assign page/paragraph if possible
+            if file_extension == 'pdf':
+                # Find which page this chunk belongs to
+                page_num = None
+                char_count = 0
+                for p in page_texts:
+                    if char_count + len(p["text"]) >= sum(len(c) for c in chunks[:i+1]):
+                        page_num = p["page"]
+                        break
+                    char_count += len(p["text"])
+                if page_num:
+                    chunk_metadata["page"] = page_num
+            elif file_extension in ['docx', 'doc']:
+                para_num = None
+                char_count = 0
+                for p in para_texts:
+                    if char_count + len(p["text"]) >= sum(len(c) for c in chunks[:i+1]):
+                        para_num = p["paragraph"]
+                        break
+                    char_count += len(p["text"])
+                if para_num:
+                    chunk_metadata["paragraph"] = para_num
             documents.append(Document(page_content=chunk, metadata=chunk_metadata))
         
         # Generate unique IDs for documents
@@ -629,10 +681,18 @@ async def websocket_endpoint(websocket: WebSocket):
 async def websocket_endpoint_chat(websocket: WebSocket):
     await websocket_endpoint(websocket)
 
-# Add a root endpoint for testing
+# Add health check endpoints
 @app.get("/")
 async def root():
-    return {"message": "API is running"}
+    return {"status": "healthy", "message": "API is running"}
+
+@app.head("/")
+async def head_root():
+    return JSONResponse(content=None, status_code=200)
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 async def process_document_in_background(file: UploadFile, session_id: str, metadata: Optional[Dict] = None):
     try:
@@ -640,9 +700,11 @@ async def process_document_in_background(file: UploadFile, session_id: str, meta
         file_extension = file.filename.split('.')[-1].lower()
         
         if file_extension == 'pdf':
-            text = await process_pdf(file)
+            page_texts = await process_pdf(file)
+            text = "\n".join([p["text"] for p in page_texts])
         elif file_extension in ['docx', 'doc']:
-            text = await process_docx(file)
+            para_texts = await process_docx(file)
+            text = "\n".join([p["text"] for p in para_texts])
         elif file_extension == 'txt':
             text = await process_txt(file)
         elif file_extension in ['jpg', 'jpeg', 'png']:
@@ -686,6 +748,27 @@ async def process_document_in_background(file: UploadFile, session_id: str, meta
                 "is_chunk": True,
                 "original_file": file.filename
             })
+            # Assign page/paragraph if possible
+            if file_extension == 'pdf':
+                page_num = None
+                char_count = 0
+                for p in page_texts:
+                    if char_count + len(p["text"]) >= sum(len(c) for c in chunks[:i+1]):
+                        page_num = p["page"]
+                        break
+                    char_count += len(p["text"])
+                if page_num:
+                    chunk_metadata["page"] = page_num
+            elif file_extension in ['docx', 'doc']:
+                para_num = None
+                char_count = 0
+                for p in para_texts:
+                    if char_count + len(p["text"]) >= sum(len(c) for c in chunks[:i+1]):
+                        para_num = p["paragraph"]
+                        break
+                    char_count += len(p["text"])
+                if para_num:
+                    chunk_metadata["paragraph"] = para_num
             documents.append(Document(page_content=chunk, metadata=chunk_metadata))
         
         # Generate unique IDs for documents
@@ -779,10 +862,32 @@ async def get_upload_status(session_id: str):
     
     return processing_status[session_id]
 
+def handle_sigterm(signum, frame):
+    print("Received SIGTERM. Starting graceful shutdown...")
+    sys.exit(0)
+
 if __name__ == "__main__":
     import uvicorn
-    print("\nStarting server on http://0.0.0.0:8008")
-    uvicorn.run(app, host="0.0.0.0", port=8008)
+    
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    
+    # Get port from environment variable or use default
+    port = int(os.getenv("PORT", 8008))
+    
+    # Configure uvicorn
+    config = uvicorn.Config(
+        app=app,
+        host="0.0.0.0",
+        port=port,
+        workers=1,  # Use single worker for stability
+        timeout_keep_alive=30,  # Reduce keep-alive timeout
+        log_level="info"
+    )
+    
+    print(f"\nStarting server on http://0.0.0.0:{port}")
+    server = uvicorn.Server(config)
+    server.run()
 
 
 
