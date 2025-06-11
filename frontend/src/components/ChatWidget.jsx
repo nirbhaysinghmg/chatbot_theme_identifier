@@ -291,8 +291,8 @@ const ThemeAnalysis = ({ themes }) => {
             <ul>
               {theme.citations.map((citation, idx) => (
                 <li key={idx}>
-                  {citation.doc_id} (Page {citation.page}, Para{" "}
-                  {citation.paragraph})
+                  {citation.doc_id} (Page {citation.page}, Lines{" "}
+                  {citation.lines})
                 </li>
               ))}
             </ul>
@@ -321,7 +321,7 @@ const DocumentAnswers = ({ answers }) => {
               <td>{answer.doc_id}</td>
               <td>{answer.answer}</td>
               <td>
-                Page {answer.citation.page}, Para {answer.citation.paragraph}
+                Page {answer.citation.page}, line {answer.citation.lines}
               </td>
             </tr>
           ))}
@@ -364,7 +364,9 @@ const DocumentUploadModal = ({ isOpen, onClose, onUpload }) => {
       console.log("Uploading with session ID:", sessionId);
 
       const response = await fetch(
-        `http://localhost:8008/upload/document?session_id=${sessionId || ""}`,
+        `https://chatbot-theme-identifier-kzpk.onrender.com/upload/document?session_id=${
+          sessionId || ""
+        }`,
         {
           method: "POST",
           body: formData,
@@ -490,9 +492,12 @@ const ChatWidget = ({ config: userConfig }) => {
     // Clear all sessions when component mounts
     const clearSessions = async () => {
       try {
-        await fetch("http://localhost:8008/sessions/clear", {
-          method: "DELETE",
-        });
+        await fetch(
+          "https://chatbot-theme-identifier-kzpk.onrender.com/sessions/clear",
+          {
+            method: "DELETE",
+          }
+        );
         // Clear local storage
         localStorage.removeItem("healthcare_session_id");
       } catch (error) {
@@ -560,7 +565,7 @@ const ChatWidget = ({ config: userConfig }) => {
       console.log("Fetching documents with session ID:", sessionId);
 
       const response = await fetch(
-        `http://localhost:8008/documents?session_id=${sessionId}`
+        `https://chatbot-theme-identifier-kzpk.onrender.com/documents?session_id=${sessionId}`
       );
       if (!response.ok) {
         throw new Error("Failed to fetch documents");
@@ -636,16 +641,19 @@ const ChatWidget = ({ config: userConfig }) => {
       const sessionId = localStorage.getItem("healthcare_session_id") || "";
 
       // Send message to backend
-      const response = await fetch("http://localhost:8008/query", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question: text,
-          session_id: sessionId,
-        }),
-      });
+      const response = await fetch(
+        "https://chatbot-theme-identifier-kzpk.onrender.com/query",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            question: text,
+            session_id: sessionId,
+          }),
+        }
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -718,7 +726,7 @@ const ChatWidget = ({ config: userConfig }) => {
             alt={`${cfg.companyName} logo`}
             className="chat-logo"
           />
-          <h2 className="chat-title">{cfg.companyName} AI Assistant</h2>
+          <h2 className="chat-title">Chat theme identifier AI Assistant</h2>
           <div className="header-buttons">
             {/* Add View Documents button */}
             <button

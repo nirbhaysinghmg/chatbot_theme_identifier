@@ -96,4 +96,14 @@ if (typeof window !== "undefined") {
 
     if (button) button.style.display = "none";
   };
+
+  window.closeChatbot = function () {
+    const chatbot = document.getElementById("chatbot");
+    const button = document.getElementById("healthcare-ai-button");
+    if (chatbot) {
+      chatbot.style.display = "none";
+      chatbot.classList.add("hidden");
+    }
+    if (button) button.style.display = "flex";
+  };
 }

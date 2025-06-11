@@ -9,7 +9,7 @@ const HealthcareAIWidget = {
     // Default configuration
     const config = {
       container: "#healthcare-ai-container",
-      baseUrl: "http://localhost:8000",
+      baseUrl: "https://chatbot-theme-identifier-kzpk.onrender.com/",
       companyName: "Appolo tyres",
       companyLogo: "/logo.png",
       primaryColor: "#0066cc",
