@@ -347,8 +347,17 @@ async def upload_document(
         # Process document based on file type
         if file_extension == 'pdf':
             page_texts = await process_pdf(file)
-            # Combine all text for embedding, but keep page info for chunking
-            text = "\n".join([p["text"] for p in page_texts])
+            # Split each page into paragraphs and keep track of (page, paragraph, text)
+            pdf_paragraphs = []
+            for p in page_texts:
+                # Split on double newlines or single newlines as fallback
+                paras = [para.strip() for para in p["text"].split('\n\n') if para.strip()]
+                if len(paras) == 1:
+                    # If only one paragraph, try splitting on single newlines
+                    paras = [para.strip() for para in p["text"].split('\n') if para.strip()]
+                for idx, para in enumerate(paras):
+                    pdf_paragraphs.append({"text": para, "page": p["page"], "paragraph": idx + 1})
+            text = "\n".join([para["text"] for para in pdf_paragraphs])
         elif file_extension in ['docx', 'doc']:
             para_texts = await process_docx(file)
             text = "\n".join([p["text"] for p in para_texts])
@@ -403,16 +412,20 @@ async def upload_document(
             })
             # Assign page/paragraph if possible
             if file_extension == 'pdf':
-                # Find which page this chunk belongs to
+                # Find which paragraph (and page) this chunk belongs to
+                para_num = None
                 page_num = None
                 char_count = 0
-                for p in page_texts:
+                for p in pdf_paragraphs:
                     if char_count + len(p["text"]) >= sum(len(c) for c in chunks[:i+1]):
                         page_num = p["page"]
+                        para_num = p["paragraph"]
                         break
                     char_count += len(p["text"])
                 if page_num:
                     chunk_metadata["page"] = page_num
+                if para_num:
+                    chunk_metadata["paragraph"] = para_num
             elif file_extension in ['docx', 'doc']:
                 para_num = None
                 char_count = 0
@@ -697,7 +710,15 @@ async def process_document_in_background(file: UploadFile, session_id: str, meta
         
         if file_extension == 'pdf':
             page_texts = await process_pdf(file)
-            text = "\n".join([p["text"] for p in page_texts])
+            # Split each page into paragraphs and keep track of (page, paragraph, text)
+            pdf_paragraphs = []
+            for p in page_texts:
+                paras = [para.strip() for para in p["text"].split('\n\n') if para.strip()]
+                if len(paras) == 1:
+                    paras = [para.strip() for para in p["text"].split('\n') if para.strip()]
+                for idx, para in enumerate(paras):
+                    pdf_paragraphs.append({"text": para, "page": p["page"], "paragraph": idx + 1})
+            text = "\n".join([para["text"] for para in pdf_paragraphs])
         elif file_extension in ['docx', 'doc']:
             para_texts = await process_docx(file)
             text = "\n".join([p["text"] for p in para_texts])
@@ -746,15 +767,19 @@ async def process_document_in_background(file: UploadFile, session_id: str, meta
             })
             # Assign page/paragraph if possible
             if file_extension == 'pdf':
+                para_num = None
                 page_num = None
                 char_count = 0
-                for p in page_texts:
+                for p in pdf_paragraphs:
                     if char_count + len(p["text"]) >= sum(len(c) for c in chunks[:i+1]):
                         page_num = p["page"]
+                        para_num = p["paragraph"]
                         break
                     char_count += len(p["text"])
                 if page_num:
                     chunk_metadata["page"] = page_num
+                if para_num:
+                    chunk_metadata["paragraph"] = para_num
             elif file_extension in ['docx', 'doc']:
                 para_num = None
                 char_count = 0
