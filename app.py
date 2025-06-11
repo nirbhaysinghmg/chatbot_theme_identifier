@@ -45,11 +45,7 @@ app = FastAPI(title="Document Analysis Chatbot")
 # Add CORS middleware with specific origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://*.vercel.app",
-        "https://your-vercel-domain.vercel.app"  # Replace with your actual Vercel domain
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
